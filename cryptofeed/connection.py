@@ -41,7 +41,7 @@ class Connection:
 class HTTPSync(Connection):
     def process_response(self, r, address, json=False, text=False, uuid=None):
         if self.raw_data_callback:
-            self.raw_data_callback.sync_callback(r.text, time.time(), str(uuid), endpoint=address)
+            self.raw_data_callback.sync_callback(r.text, time.time_ns(), str(uuid), endpoint=address)
         r.raise_for_status()
         if json:
             return json_parser.loads(r.text, parse_float=Decimal)
@@ -77,7 +77,7 @@ class AsyncConnection(Connection):
         self.id: str = conn_id
         self.received: int = 0
         self.sent: int = 0
-        self.last_message = None
+        self.last_message = ()
         self.authentication = authentication
         self.subscription = subscription
         self.conn: Union[websockets.WebSocketClientProtocol, aiohttp.ClientSession] = None
@@ -151,7 +151,7 @@ class HTTPAsyncConn(AsyncConnection):
             self.conn = aiohttp.ClientSession()
             self.sent = 0
             self.received = 0
-            self.last_message = None
+            self.last_message = ()
 
     async def read(self, address: str, header=None, params=None, return_headers=False, retry_count=0, retry_delay=60) -> str:
         if not self.is_open:
@@ -161,7 +161,7 @@ class HTTPAsyncConn(AsyncConnection):
         while True:
             async with self.conn.get(address, headers=header, params=params, proxy=self.proxy) as response:
                 data = await response.text()
-                self.last_message = time.time()
+                self.last_message = (time.time_ns(), time.clock_gettime_ns(time.CLOCK_BOOTTIME))
                 self.received += 1
                 if self.raw_data_callback:
                     await self.raw_data_callback(data, self.last_message, self.id, endpoint=address, header=None if return_headers is False else dict(response.headers))
@@ -186,7 +186,7 @@ class HTTPAsyncConn(AsyncConnection):
                 self.sent += 1
                 data = await response.read()
                 if self.raw_data_callback:
-                    await self.raw_data_callback(data, time.time(), self.id, send=address)
+                    await self.raw_data_callback(data, time.time_ns(), self.id, send=address)
                 if response.status == 429 and retry_count:
                     LOG.warning("%s: encountered a rate limit for address %s, retrying in 60 seconds", self.id, address)
                     retry_count -= 1
@@ -206,7 +206,7 @@ class HTTPAsyncConn(AsyncConnection):
                 self.sent += 1
                 data = await response.read()
                 if self.raw_data_callback:
-                    await self.raw_data_callback(data, time.time(), self.id, send=address)
+                    await self.raw_data_callback(data, time.time_ns(), self.id, send=address)
                 if response.status == 429 and retry_count:
                     LOG.warning("%s: encountered a rate limit for address %s, retrying in 60 seconds", self.id, address)
                     retry_count -= 1
@@ -238,7 +238,7 @@ class HTTPPoll(HTTPAsyncConn):
             async with self.conn.get(address, headers=header, proxy=self.proxy) as response:
                 data = await response.text()
                 self.received += 1
-                self.last_message = time.time()
+                self.last_message = (time.time_ns(), time.clock_gettime_ns(time.CLOCK_BOOTTIME))
                 if self.raw_data_callback:
                     await self.raw_data_callback(data, self.last_message, self.id, endpoint=address)
                 if response.status != 429:
@@ -310,14 +310,14 @@ class WSAsyncConn(AsyncConnection):
         else:
             LOG.debug('%s: connecting to %s', self.id, self.address)
             if self.raw_data_callback:
-                await self.raw_data_callback(None, time.time(), self.id, connect=self.address)
+                await self.raw_data_callback(None, time.time_ns(), self.id, connect=self.address)
             if self.authentication:
                 self.address, self.ws_kwargs = await self.authentication(self.address, self.ws_kwargs)
 
             self.conn = await websockets.connect(self.address, **self.ws_kwargs)
         self.sent = 0
         self.received = 0
-        self.last_message = None
+        self.last_message = ()
 
     async def read(self) -> AsyncIterable:
         if not self.is_open:
@@ -326,13 +326,13 @@ class WSAsyncConn(AsyncConnection):
         if self.raw_data_callback:
             async for data in self.conn:
                 self.received += 1
-                self.last_message = time.time()
+                self.last_message = (time.time_ns(), time.clock_gettime_ns(time.CLOCK_BOOTTIME))
                 await self.raw_data_callback(data, self.last_message, self.id)
                 yield data
         else:
             async for data in self.conn:
                 self.received += 1
-                self.last_message = time.time()
+                self.last_message = (time.time_ns(), time.clock_gettime_ns(time.CLOCK_BOOTTIME))
                 yield data
 
     async def write(self, data: str):
@@ -340,7 +340,7 @@ class WSAsyncConn(AsyncConnection):
             raise ConnectionClosed
 
         if self.raw_data_callback:
-            await self.raw_data_callback(data, time.time(), self.id, send=self.address)
+            await self.raw_data_callback(data, time.time_ns(), self.id, send=self.address)
         await self.conn.send(data)
         self.sent += 1
 

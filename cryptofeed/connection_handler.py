@@ -43,7 +43,7 @@ class ConnectionHandler:
     async def _watcher(self):
         while self.conn.is_open and self.running:
             if self.conn.last_message:
-                if time.time() - self.conn.last_message > self.timeout:
+                if (time.time_ns() - self.conn.last_message[0])*1e-9 > self.timeout:
                     LOG.warning("%s: received no messages within timeout, restarting connection", self.conn.uuid)
                     await self.conn.close()
                     break
