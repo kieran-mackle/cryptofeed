@@ -62,7 +62,7 @@ class BinanceOptions(Binance, BinanceRestMixin):
             strike_price = symbol['symbol'].split("-")[-2]
             option_type = CALL if symbol['side'] == "CALL" else PUT
 
-            s = Symbol(base, symbol['quoteAsset'], type=stype, expiry_date=expiration, option_type=option_type, strike_price=strike_price)
+            s = Symbol(base, base, type=stype, expiry_date=expiration, option_type=option_type, strike_price=strike_price)
             ret[s.normalized] = symbol['symbol']
             info['tick_size'][s.normalized] = symbol['filters'][0]['tickSize']
             info['instrument_type'][s.normalized] = stype
