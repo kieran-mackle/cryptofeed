@@ -18,7 +18,7 @@ from yapic import json
 from cryptofeed.connection import AsyncConnection, RestEndpoint, Routes, WebsocketEndpoint
 from cryptofeed.defines import BID, ASK, BUY, BYBIT, CANCELLED, CANCELLING, CANDLES, FAILED, FILLED, FUNDING, L2_BOOK, LIMIT, LIQUIDATIONS, MAKER, MARKET, OPEN, PARTIAL, SELL, SUBMITTING, TAKER, TRADES, OPEN_INTEREST, INDEX, ORDER_INFO, FILLS, FUTURES, PERPETUAL, SPOT, TICKER
 from cryptofeed.feed import Feed
-from cryptofeed.types import OrderBook, Trade, Index, OpenInterest, Funding, OrderInfo, Fill, Candle, Liquidation
+from cryptofeed.types import OrderBook, Trade, Index, OpenInterest, Funding, OrderInfo, Fill, Candle, Liquidation, Ticker
 
 
 LOG = logging.getLogger('feedhandler')
@@ -29,7 +29,7 @@ class Bybit(Feed):
     websocket_channels = {
         L2_BOOK: '', # Assigned in self.subscribe
         TRADES: 'trade',
-        TICKER: 'tickers',
+        TICKER: 'bookticker',
         FILLS: 'execution',
         ORDER_INFO: 'order',
         INDEX: 'instrument_info.100ms',
@@ -218,7 +218,7 @@ class Bybit(Feed):
         elif msg["topic"].startswith('orderbook'):
             # Spot orderbook
             await self._book(msg, timestamp)
-        elif msg["topic"].startswith('tickers'):
+        elif msg["topic"].startswith('bookticker'):
             await self._ticker(msg, timestamp)
         elif msg['topic'].startswith('liquidation'):
             await self._liquidation(msg, timestamp)
@@ -505,19 +505,16 @@ class Bybit(Feed):
         """
         {
             "data": {
-                "t": 1661742216005,
                 "s": "BTCUSDT",
-                "o": "19820",
-                "h": "20071.93",
-                "l": "19365.85",
-                "c": "19694.27",
-                "v": "9997.246174",
-                "qv": "197357775.97621786",
-                "m": "-0.0063"
+                "bp": "19693.04",
+                "bq": "0.913957",
+                "ap": "19694.27",
+                "aq": "0.705447",
+                "t": 1661742216108
             },
             "type": "snapshot",
-            "topic": "tickers.BTCUSDT",
-            "ts": 1661742216011
+            "topic": "bookticker.BTCUSDT",
+            "ts": 1661742216109
         }
         """
         # Need to match to a symbol with a slash (per spot)
@@ -525,18 +522,16 @@ class Bybit(Feed):
         adj_symbol = self.exchange_symbol_to_std_symbol(exchange_symbol)
 
         if "PERP" in adj_symbol:
-            # Convert to spot symbol
-            # TODO - what if this is actually a perp?
+            # Convert to spot symbol (no bookticker stream for derivatives)
             adj_symbol = "/".join(adj_symbol.split("-")[:-1])
         
         pair = self.exchange_symbol_to_std_symbol(adj_symbol)
 
-        # TODO - below need to be updated to conform to cryptofeed.typers.pyx: Ticker
-        bid = Decimal(msg['data']['b'])
-        ask = Decimal(msg['data']['a'])
+        bid = Decimal(msg['data']['bp'])
+        ask = Decimal(msg['data']['ap'])
 
-        if 'E' in msg:
-            ts = self.timestamp_normalize(msg['E'])
+        if 'ts' in msg:
+            ts = self.timestamp_normalize(msg['ts'])
         else:
             ts = timestamp
 
