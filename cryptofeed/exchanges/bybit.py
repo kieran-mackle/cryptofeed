@@ -16,9 +16,9 @@ from datetime import datetime as dt
 from yapic import json
 
 from cryptofeed.connection import AsyncConnection, RestEndpoint, Routes, WebsocketEndpoint
-from cryptofeed.defines import BID, ASK, BUY, BYBIT, CANCELLED, CANCELLING, CANDLES, FAILED, FILLED, FUNDING, L2_BOOK, LIMIT, LIQUIDATIONS, MAKER, MARKET, OPEN, PARTIAL, SELL, SUBMITTING, TAKER, TRADES, OPEN_INTEREST, INDEX, ORDER_INFO, FILLS, FUTURES, PERPETUAL, SPOT
+from cryptofeed.defines import BID, ASK, BUY, BYBIT, CANCELLED, CANCELLING, CANDLES, FAILED, FILLED, FUNDING, L2_BOOK, LIMIT, LIQUIDATIONS, MAKER, MARKET, OPEN, PARTIAL, SELL, SUBMITTING, TAKER, TRADES, OPEN_INTEREST, INDEX, ORDER_INFO, FILLS, FUTURES, PERPETUAL, SPOT, TICKER
 from cryptofeed.feed import Feed
-from cryptofeed.types import OrderBook, Trade, Index, OpenInterest, Funding, OrderInfo, Fill, Candle, Liquidation
+from cryptofeed.types import OrderBook, Trade, Index, OpenInterest, Funding, OrderInfo, Fill, Candle, Liquidation, Ticker
 
 
 LOG = logging.getLogger('feedhandler')
@@ -29,6 +29,7 @@ class Bybit(Feed):
     websocket_channels = {
         L2_BOOK: '', # Assigned in self.subscribe
         TRADES: 'trade',
+        TICKER: 'bookticker',
         FILLS: 'execution',
         ORDER_INFO: 'order',
         INDEX: 'instrument_info.100ms',
@@ -41,7 +42,7 @@ class Bybit(Feed):
         WebsocketEndpoint('wss://stream.bybit.com/realtime', channel_filter=(websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX], websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES], websocket_channels[LIQUIDATIONS]), instrument_filter=("QUOTE", ("USD",)), sandbox="wss://stream-testnet.bybit.com/realtime", options={"compression": None}),
         WebsocketEndpoint('wss://stream.bybit.com/realtime_public', instrument_filter=('TYPE', (FUTURES, PERPETUAL)), channel_filter=(websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[INDEX], websocket_channels[OPEN_INTEREST], websocket_channels[FUNDING], websocket_channels[CANDLES], websocket_channels[LIQUIDATIONS]), sandbox='wss://stream-testnet.bybit.com/realtime_public', options={'compression': None}),
         WebsocketEndpoint('wss://stream.bybit.com/realtime_private', instrument_filter=('TYPE', (FUTURES, PERPETUAL)), channel_filter=(websocket_channels[ORDER_INFO], websocket_channels[FILLS]), sandbox='wss://stream-testnet.bybit.com/realtime_private', options={'compression': None}),
-        WebsocketEndpoint('wss://stream.bybit.com/spot/public/v3', instrument_filter=('TYPE', (SPOT,)), channel_filter=(websocket_channels[L2_BOOK], websocket_channels[TRADES]), sandbox='wss://stream-testnet.bybit.com/spot/public/v3', options={'compression': None}),
+        WebsocketEndpoint('wss://stream.bybit.com/spot/public/v3', instrument_filter=('TYPE', (SPOT,)), channel_filter=(websocket_channels[L2_BOOK], websocket_channels[TRADES], websocket_channels[TICKER]), sandbox='wss://stream-testnet.bybit.com/spot/public/v3', options={'compression': None}),
     ]
     rest_endpoints = [
         RestEndpoint('https://api.bybit.com', routes=Routes('/v2/public/symbols')),
@@ -217,6 +218,8 @@ class Bybit(Feed):
         elif msg["topic"].startswith('orderbook'):
             # Spot orderbook
             await self._book(msg, timestamp)
+        elif msg["topic"].startswith('bookticker'):
+            await self._ticker(msg, timestamp)
         elif msg['topic'].startswith('liquidation'):
             await self._liquidation(msg, timestamp)
         elif "instrument_info" in msg["topic"]:
@@ -497,6 +500,43 @@ class Bybit(Feed):
             ts = int(ts)
 
         await self.book_callback(L2_BOOK, self._l2_book[pair], timestamp, timestamp=ts / 1000000, raw=msg, delta=delta)
+    
+    async def _ticker(self, msg: dict, timestamp: float):
+        """
+        {
+            "data": {
+                "s": "BTCUSDT",
+                "bp": "19693.04",
+                "bq": "0.913957",
+                "ap": "19694.27",
+                "aq": "0.705447",
+                "t": 1661742216108
+            },
+            "type": "snapshot",
+            "topic": "bookticker.BTCUSDT",
+            "ts": 1661742216109
+        }
+        """
+        # Need to match to a symbol with a slash (per spot)
+        exchange_symbol = msg["topic"].split(".")[-1]
+        adj_symbol = self.exchange_symbol_to_std_symbol(exchange_symbol)
+
+        if "PERP" in adj_symbol:
+            # Convert to spot symbol (no bookticker stream for derivatives)
+            adj_symbol = "/".join(adj_symbol.split("-")[:-1])
+        
+        pair = self.exchange_symbol_to_std_symbol(adj_symbol)
+
+        bid = Decimal(msg['data']['bp'])
+        ask = Decimal(msg['data']['ap'])
+
+        if 'ts' in msg:
+            ts = self.timestamp_normalize(msg['ts'])
+        else:
+            ts = timestamp
+
+        t = Ticker(self.id, pair, bid, ask, ts, raw=msg)
+        await self.callback(TICKER, t, timestamp)
 
     async def _order(self, msg: dict, timestamp: float):
         """
